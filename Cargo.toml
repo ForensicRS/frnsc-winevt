@@ -1,0 +1,17 @@
+[package]
+name = "frnsc-winevt"
+version = "0.1.0"
+authors = ["Samuel Garcés Marín <samuel.garces@protonmail.com>"]
+keywords = ["forensic", "windows", "parser", "evtx", "eventlog"]
+categories = ["parsing"]
+description = "forensic-rs EventLogReader/FormatFactory implementation for legacy .evt and modern .evtx Windows Event Log files"
+license = "MIT"
+edition = "2024"
+rust-version = "1.85"
+repository = "https://github.com/ForensicRS/frnsc-winevt"
+
+[dependencies]
+forensic-rs = "0.14"
+
+[dev-dependencies]
+anyhow = "1"

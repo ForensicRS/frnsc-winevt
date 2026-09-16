@@ -1,0 +1,17 @@
+# Build artifacts
+/target
+/Cargo.lock
+
+# Local dev-only cargo config (patches forensic-rs to a local sibling
+# checkout for co-development — see .cargo/config.toml). Not committed:
+# contributors/CI build against the crates.io version Cargo.toml declares.
+/.cargo
+
+# Editors / IDEs
+.vscode
+.idea
+*.swp
+
+# OS cruft
+.DS_Store
+Thumbs.db
