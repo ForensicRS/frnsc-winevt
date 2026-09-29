@@ -141,160 +141,11 @@ impl EventLogReader for EvtxEventLogReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crc32::crc32;
-    use crate::evtx::binxml::values;
-    use crate::evtx::chunk::EVTX_CHUNK_MAGIC;
-    use crate::evtx::file_header::EVTX_FILE_MAGIC;
-    use crate::evtx::record::EVTX_RECORD_MAGIC;
-
-    fn utf16le(s: &str) -> Vec<u8> {
-        s.encode_utf16().flat_map(|u| u.to_le_bytes()).collect()
-    }
-
-    fn push_name_def(buf: &mut Vec<u8>, name: &str) -> u32 {
-        let offset = buf.len() as u32;
-        buf.extend_from_slice(&0u32.to_le_bytes());
-        buf.extend_from_slice(&0u16.to_le_bytes());
-        buf.extend_from_slice(&(name.encode_utf16().count() as u16).to_le_bytes());
-        buf.extend_from_slice(&utf16le(name));
-        buf.extend_from_slice(&0u16.to_le_bytes());
-        offset
-    }
-
-    /// Appends a record's BinXML fragment directly onto the chunk buffer
-    /// `b` (name-table offsets are chunk-absolute, so this must be built
-    /// in place rather than in a standalone buffer and copied in later): a
-    /// non-templated `<Event><System><Provider Name="P"/><EventID>7</EventID>
-    /// <Channel>Application</Channel><Computer>HOST</Computer><Level>4</Level>
-    /// </System></Event>`.
-    fn push_event_binxml(b: &mut Vec<u8>) {
-        b.push(0x0F); // fragment header
-        b.extend_from_slice(&[1, 1, 0]);
-
-        // <Event>
-        b.push(0x01);
-        b.extend_from_slice(&0u32.to_le_bytes());
-        let ph = b.len();
-        b.extend_from_slice(&0u32.to_le_bytes());
-        let off = push_name_def(b, "Event");
-        b[ph..ph + 4].copy_from_slice(&off.to_le_bytes());
-        b.push(0x02); // close start element
-
-        // <System>
-        b.push(0x01);
-        b.extend_from_slice(&0u32.to_le_bytes());
-        let ph = b.len();
-        b.extend_from_slice(&0u32.to_le_bytes());
-        let off = push_name_def(b, "System");
-        b[ph..ph + 4].copy_from_slice(&off.to_le_bytes());
-        b.push(0x02);
-
-        // <Provider Name="P" /> (empty element with one attribute)
-        b.push(0x01 | 0x40); // has attributes
-        b.extend_from_slice(&0u32.to_le_bytes());
-        let ph = b.len();
-        b.extend_from_slice(&0u32.to_le_bytes());
-        let off = push_name_def(b, "Provider");
-        b[ph..ph + 4].copy_from_slice(&off.to_le_bytes());
-        let attr_list_len_pos = b.len();
-        b.extend_from_slice(&0u32.to_le_bytes());
-        let attr_list_start = b.len();
-        b.push(0x06); // attribute
-        let ph = b.len();
-        b.extend_from_slice(&0u32.to_le_bytes());
-        let off = push_name_def(b, "Name");
-        b[ph..ph + 4].copy_from_slice(&off.to_le_bytes());
-        b.push(0x05); // value
-        b.push(values::VALUE_WSTRING);
-        b.extend_from_slice(&("P".encode_utf16().count() as u16).to_le_bytes());
-        b.extend_from_slice(&utf16le("P"));
-        let attr_list_len = (b.len() - attr_list_start) as u32;
-        b[attr_list_len_pos..attr_list_len_pos + 4].copy_from_slice(&attr_list_len.to_le_bytes());
-        b.push(0x03); // close empty element
-
-        // <EventID>7</EventID>
-        push_text_element(b, "EventID", "7");
-        // <Channel>Application</Channel>
-        push_text_element(b, "Channel", "Application");
-        // <Computer>HOST</Computer>
-        push_text_element(b, "Computer", "HOST");
-        // <Level>4</Level>
-        push_text_element(b, "Level", "4");
-
-        b.push(0x04); // end </System>
-        b.push(0x04); // end </Event>
-        b.push(0x00); // eof
-    }
-
-    fn push_text_element(b: &mut Vec<u8>, name: &str, text: &str) {
-        b.push(0x01);
-        b.extend_from_slice(&0u32.to_le_bytes());
-        let ph = b.len();
-        b.extend_from_slice(&0u32.to_le_bytes());
-        let off = push_name_def(b, name);
-        b[ph..ph + 4].copy_from_slice(&off.to_le_bytes());
-        b.push(0x02);
-        b.push(0x05);
-        b.push(values::VALUE_WSTRING);
-        b.extend_from_slice(&(text.encode_utf16().count() as u16).to_le_bytes());
-        b.extend_from_slice(&utf16le(text));
-        b.push(0x04);
-    }
-
-    fn build_evtx_file() -> Vec<u8> {
-        // Built as one growing buffer (not a fixed-size chunk with BinXML
-        // spliced in from a standalone buffer) because BinXML name-table
-        // offsets are chunk-absolute: `push_name_def`/`push_event_binxml`
-        // must see the real position each byte lands at within the chunk.
-        let mut chunk = vec![0u8; EVTX_CHUNK_HEADER_SIZE];
-        chunk[0..8].copy_from_slice(&EVTX_CHUNK_MAGIC);
-        chunk[24..32].copy_from_slice(&1u64.to_le_bytes()); // first_event_record_id
-        chunk[32..40].copy_from_slice(&1u64.to_le_bytes()); // last_event_record_id
-        chunk[40..44].copy_from_slice(&128u32.to_le_bytes());
-
-        let record_offset = EVTX_CHUNK_HEADER_SIZE;
-        chunk.extend_from_slice(&EVTX_RECORD_MAGIC);
-        let size_field_pos = chunk.len();
-        chunk.extend_from_slice(&0u32.to_le_bytes()); // size, patched below
-        chunk.extend_from_slice(&1u64.to_le_bytes()); // record_id
-        chunk.extend_from_slice(&133_514_430_235_959_706u64.to_le_bytes());
-        push_event_binxml(&mut chunk);
-        let record_total_size = chunk.len() - record_offset + 4;
-        chunk[size_field_pos..size_field_pos + 4].copy_from_slice(&(record_total_size as u32).to_le_bytes());
-        chunk.extend_from_slice(&(record_total_size as u32).to_le_bytes()); // trailing size copy
-
-        chunk.resize(EVTX_CHUNK_SIZE, 0);
-
-        let free_space_offset = (record_offset + record_total_size) as u32;
-        chunk[44..48].copy_from_slice(&(record_offset as u32).to_le_bytes());
-        chunk[48..52].copy_from_slice(&free_space_offset.to_le_bytes());
-        let events_checksum = crc32(&chunk[EVTX_CHUNK_HEADER_SIZE..free_space_offset as usize]);
-        chunk[52..56].copy_from_slice(&events_checksum.to_le_bytes());
-
-        let mut header_bytes_for_checksum = Vec::new();
-        header_bytes_for_checksum.extend_from_slice(&chunk[0..120]);
-        header_bytes_for_checksum.extend_from_slice(&chunk[128..EVTX_CHUNK_HEADER_SIZE]);
-        let header_checksum = crc32(&header_bytes_for_checksum);
-        chunk[124..128].copy_from_slice(&header_checksum.to_le_bytes());
-
-        let mut file = vec![0u8; EVTX_FILE_HEADER_BLOCK_SIZE];
-        file[0..8].copy_from_slice(&EVTX_FILE_MAGIC);
-        file[16..24].copy_from_slice(&0u64.to_le_bytes()); // last_chunk_number
-        file[32..36].copy_from_slice(&128u32.to_le_bytes());
-        file[36..38].copy_from_slice(&1u16.to_le_bytes());
-        file[38..40].copy_from_slice(&3u16.to_le_bytes());
-        file[40..42].copy_from_slice(&4096u16.to_le_bytes());
-        file[42..44].copy_from_slice(&1u16.to_le_bytes());
-        let file_checksum = crc32(&file[0..120]);
-        file[124..128].copy_from_slice(&file_checksum.to_le_bytes());
-
-        file.extend_from_slice(&chunk);
-        file
-    }
+    use crate::evtx::testdata::{build_evtx_file, build_evtx_file_with_undecodable_record};
 
     #[test]
     fn reads_and_queries_synthetic_evtx() {
-        let bytes = build_evtx_file();
+        let bytes = build_evtx_file("Application");
         let reader = EvtxEventLogReader::from_bytes(bytes).unwrap();
 
         assert_eq!(reader.channels().unwrap(), vec!["Application".to_string()]);
@@ -320,7 +171,7 @@ mod tests {
 
     #[test]
     fn a_bad_chunk_checksum_is_flagged_on_every_record_from_it_not_dropped() {
-        let mut bytes = build_evtx_file();
+        let mut bytes = build_evtx_file("Application");
         // Corrupt one byte of record data covered by the chunk's events
         // checksum, without touching any structural field (magic, offsets,
         // trailing size copy) — the record must still parse and appear.
@@ -338,40 +189,10 @@ mod tests {
 
     #[test]
     fn a_record_with_undecodable_binxml_surfaces_instead_of_vanishing() {
-        // A record whose BinXML immediately violates the token grammar
-        // (a bare EndElement with no matching open element) still frames
-        // correctly at the header level and must still appear, carrying the
-        // decode failure rather than disappearing.
-        let mut chunk = vec![0u8; EVTX_CHUNK_HEADER_SIZE];
-        chunk[0..8].copy_from_slice(&EVTX_CHUNK_MAGIC);
-        chunk[24..32].copy_from_slice(&1u64.to_le_bytes());
-        chunk[32..40].copy_from_slice(&1u64.to_le_bytes());
-        chunk[40..44].copy_from_slice(&128u32.to_le_bytes());
-
-        let record_offset = EVTX_CHUNK_HEADER_SIZE;
-        chunk.extend_from_slice(&EVTX_RECORD_MAGIC);
-        let size_field_pos = chunk.len();
-        chunk.extend_from_slice(&0u32.to_le_bytes());
-        chunk.extend_from_slice(&42u64.to_le_bytes()); // record_id
-        chunk.extend_from_slice(&133_514_430_235_959_706u64.to_le_bytes());
-        chunk.push(0x0F); // fragment header
-        chunk.extend_from_slice(&[1, 1, 0]);
-        chunk.push(0x04); // EndElement with nothing open — invalid grammar
-        chunk.push(0x00); // eof
-        let record_total_size = chunk.len() - record_offset + 4;
-        chunk[size_field_pos..size_field_pos + 4].copy_from_slice(&(record_total_size as u32).to_le_bytes());
-        chunk.extend_from_slice(&(record_total_size as u32).to_le_bytes());
-        chunk.resize(EVTX_CHUNK_SIZE, 0);
-
-        let free_space_offset = (record_offset + record_total_size) as u32;
-        chunk[44..48].copy_from_slice(&(record_offset as u32).to_le_bytes());
-        chunk[48..52].copy_from_slice(&free_space_offset.to_le_bytes());
-
-        let mut file = vec![0u8; EVTX_FILE_HEADER_BLOCK_SIZE];
-        file[0..8].copy_from_slice(&EVTX_FILE_MAGIC);
-        file[40..42].copy_from_slice(&4096u16.to_le_bytes());
-        file[42..44].copy_from_slice(&1u16.to_le_bytes());
-        file.extend_from_slice(&chunk);
+        // A record whose BinXML immediately violates the token grammar (a bare EndElement with
+        // no matching open element) still frames correctly at the header level and must still
+        // appear, carrying the decode failure rather than disappearing.
+        let file = build_evtx_file_with_undecodable_record(42);
 
         let reader = EvtxEventLogReader::from_bytes(file).unwrap();
         let mut iter = reader.query(&EventLogQuery::new()).unwrap();

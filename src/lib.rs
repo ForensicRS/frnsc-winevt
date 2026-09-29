@@ -26,6 +26,8 @@ mod crc32;
 pub mod evt;
 pub mod evtx;
 mod factory;
+pub mod parser;
 mod query_iter;
 
 pub use factory::{EvtFormatFactory, EvtxFormatFactory};
+pub use parser::EvtxParserFactory;
