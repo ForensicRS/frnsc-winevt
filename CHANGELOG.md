@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Failure granularity: one unreadable log is one `Err` item and the other logs are still read;
     a record whose BinXML does not decode still arrives as a record carrying
     `evtx.record.decode_error`.
+  - **Known limitation:** that granularity covers whole logs, not truncation *within* one.
+    `EvtxEventLogReader` derives its chunk count from the file length and returns `Ok` once the
+    4096-byte header parses, so a `.evtx` truncated to any length in `4096..=69631` yields zero
+    records and zero errors — identical output to a genuinely empty log. The header's own
+    `chunk_count`/`last_chunk_number` are parsed and then ignored. The parser's record-cursor
+    `Err` arm is unreachable for the same reason (`query()` walks an eagerly-built `Vec`) and is
+    kept as defensive structure. Pinned by `parser::tests::a_log_truncated_mid_chunk_is_silently_empty`;
+    the fix belongs in the reader, which this change deliberately does not touch.
 - Initial implementation of `FormatFactory` and `EventLogReader` for legacy `.evt` and modern `.evtx` Windows Event Log files, including a from-scratch BinXML decoder (templates, substitutions, value-type arrays) for `.evtx`.
 - Nested BinXml value decoding (`VALUE_BINXML`), so `EventData`'s content is recursively decoded and populated instead of dropped.
 - `tests/real_evtx_sample.rs`: a real `.evtx` sample checked in as a regression fixture.

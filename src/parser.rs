@@ -88,12 +88,37 @@ fn artifact_for_channel(channel: &str) -> Artifact {
 ///
 /// # Failure granularity
 ///
-/// One unreadable log is one `Err` item and the other logs are still read. Within a log, a
-/// record whose BinXML does not decode still appears (carrying
-/// `evtx.record.decode_error` — see [`EvtxEventLogReader`]) rather than vanishing, and a read
-/// error from the record cursor is one `Err` item that ends *that* log's scan, because there is
-/// no way to resynchronize onto the next record boundary once one record's framing cannot be
-/// trusted.
+/// One unreadable log is one `Err` item and the other logs are still read: this is the granularity
+/// the parser itself controls, and it holds. Within a log, a record whose BinXML does not decode
+/// still appears (carrying `evtx.record.decode_error` — see [`EvtxEventLogReader`]) rather than
+/// vanishing.
+///
+/// ## What is *not* reported, and why the cursor's `Err` arm is still here
+///
+/// The record cursor's `Err` arm below is **unreachable today**.
+/// [`EvtxEventLogReader::from_bytes`] decodes the whole file eagerly and returns `Ok` as soon as
+/// the 4096-byte file header parses; `query()` then iterates an already-built `Vec<EventRecord>`,
+/// which cannot fail. So the parser never sees a mid-log read error, and the "ends that log's
+/// scan" behaviour it implements has no input that triggers it. The arm is kept as defensive
+/// structure — it goes live if the reader ever becomes streaming — and the no-resynchronization
+/// reasoning stays correct for that day.
+///
+/// The consequence is a real blind spot, recorded in the workspace `FINDINGS.md` and pinned by
+/// `a_log_truncated_mid_chunk_is_silently_empty`:
+///
+/// * the reader derives `total_chunks` from the file *length*
+///   (`(len - 4096) / EVTX_CHUNK_SIZE`), so a `.evtx` truncated to any length in `4096..=69631`
+///   parses its header, yields `total_chunks == 0`, and produces **zero records and zero `Err`
+///   items** — output identical to a genuinely empty log;
+/// * an unparsable chunk slot is skipped (`continue`) and a structurally corrupt record ends the
+///   chunk scan (`break`), in both cases without so much as a `debug!`;
+/// * the header's own `chunk_count` and `last_chunk_number` — the evidence that records *were*
+///   expected — are parsed into [`EvtxFileHeader`] and then ignored, so nothing compares them
+///   against `total_chunks`.
+///
+/// Fixing that means changing [`EvtxEventLogReader`], whose non-test code this parser
+/// deliberately does not touch; it is a separate change. Until then, do not read "one `Err` per
+/// unreadable log" as covering truncation *within* a log.
 pub struct EvtxParserFactory {
     descriptor: ParserDescriptor,
 }
@@ -278,6 +303,11 @@ impl ArtifactParserFactory for EvtxParserFactory {
                         }
                         Ok(None) => break,
                         Err(e) => {
+                            // UNREACHABLE TODAY, deliberately kept — see this type's docs.
+                            // `EvtxEventLogReader` decodes eagerly in `from_bytes`, so `query()`
+                            // walks a `Vec<EventRecord>` that cannot yield `Err`. This arm goes
+                            // live only if the reader becomes streaming; the reasoning below is
+                            // what it should do when it does.
                             if out.emit(Err(e.with_path(path.clone()))).is_stop() {
                                 return Ok(());
                             }
@@ -573,6 +603,70 @@ mod tests {
         assert_eq!(
             field(records[0], ARTIFACT_PATH),
             Some(format!("{LOGS}/Security.evtx").as_str())
+        );
+    }
+
+    #[test]
+    fn a_log_truncated_mid_chunk_is_silently_empty() {
+        // REGRESSION PIN, NOT AN ENDORSEMENT. This asserts a known blind spot so that it is
+        // recorded rather than merely unknown — see this module's `EvtxParserFactory` docs and
+        // the workspace `FINDINGS.md`.
+        //
+        // `a_truncated_log_is_one_err_item_…` above uses truncate(16), which is the *only* class
+        // of truncation the reader catches: below 4096 the file header itself cannot be framed.
+        // Cut anywhere inside the first chunk instead and the header parses fine, while
+        // `total_chunks = (len - 4096) / 65536` rounds down to zero — so the log reports as
+        // empty, with no error, even though its own header says records were written.
+        let full = build_evtx_file("System");
+        assert_eq!(full.len(), 69632, "one header block plus one 64 KiB chunk");
+        let mut truncated = full.clone();
+        truncated.truncate(40000); // header intact, chunk cut in half
+        let vfs = InMemoryVirtualFileSystem::new()
+            .with_file(format!("{LOGS}/System.evtx"), truncated)
+            .with_file(
+                format!("{LOGS}/Security.evtx"),
+                build_evtx_file("Security"),
+            );
+        let items = run(&sources(vfs, true));
+
+        let errors: Vec<&ForensicError> = items.iter().filter_map(|i| i.as_ref().err()).collect();
+        let records: Vec<&ForensicData> = items.iter().filter_map(|i| i.as_ref().ok()).collect();
+
+        // The blind spot itself: no record, and nothing says so.
+        assert!(
+            errors.is_empty(),
+            "PINNED CURRENT BEHAVIOUR: mid-chunk truncation raises no error. If this now fails, \
+             the reader learned to compare its header's chunk_count against the file length — \
+             that is the desired fix; update this test and the FINDINGS.md entry rather than \
+             restoring the silence. Got: {errors:?}"
+        );
+        assert_eq!(
+            records.len(),
+            1,
+            "PINNED CURRENT BEHAVIOUR: the truncated log contributes no records at all, so only \
+             the intact Security.evtx is represented"
+        );
+        assert_eq!(
+            field(records[0], ARTIFACT_PATH),
+            Some(format!("{LOGS}/Security.evtx").as_str()),
+            "the one surviving record must be the intact log's"
+        );
+
+        // And the point of the pin: that output is byte-for-byte what a genuinely empty log
+        // produces, which is why an analyst cannot tell the two apart.
+        let mut header_only = full;
+        header_only.truncate(4096);
+        let empty_vfs = InMemoryVirtualFileSystem::new()
+            .with_file(format!("{LOGS}/System.evtx"), header_only)
+            .with_file(
+                format!("{LOGS}/Security.evtx"),
+                build_evtx_file("Security"),
+            );
+        let empty_items = run(&sources(empty_vfs, true));
+        assert_eq!(
+            empty_items.len(),
+            items.len(),
+            "a log truncated mid-chunk and a log with no chunks at all are indistinguishable"
         );
     }
 
