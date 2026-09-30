@@ -6,7 +6,6 @@ pub mod file_header;
 pub mod mapping;
 pub mod reader;
 pub mod record;
-#[cfg(test)]
 pub(crate) mod testdata;
 pub mod xml;
 

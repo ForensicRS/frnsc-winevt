@@ -1,7 +1,10 @@
-//! Synthetic `.evtx` bytes for this crate's own tests.
+//! Synthetic `.evtx` bytes for this crate's own tests and, through [`crate::fixtures`], for
+//! downstream readiness checks.
 //!
-//! `#[cfg(test)]` and `pub(crate)`: a hand-built EVTX file is expensive enough to get right
-//! that two test modules should not each own a copy, but it is a test fixture, not API.
+//! `pub(crate)`: a hand-built EVTX file is expensive enough to get right that two test modules
+//! should not each own a copy, but it is a test fixture, not stable API — [`crate::fixtures`] is
+//! the public seam for that. Not `#[cfg(test)]`: [`crate::fixtures::evtx_file`] needs
+//! [`build_evtx_file`] in ordinary (non-test) builds too.
 //!
 //! Everything here is built as one growing buffer rather than a fixed-size chunk with the
 //! BinXML spliced in afterwards, because BinXML name-table offsets are *chunk-absolute*:
@@ -159,6 +162,10 @@ pub(crate) fn build_evtx_file(channel: &str) -> Vec<u8> {
 ///
 /// The record must still surface — carrying the decode failure — rather than vanishing, which is
 /// what both the reader and the parser above it are on the hook for.
+///
+/// Only ever called from `#[cfg(test)]` code (unlike [`build_evtx_file`], which
+/// [`crate::fixtures`] also calls): a corrupt fixture has no readiness-benchmark use.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn build_evtx_file_with_undecodable_record(record_id: u64) -> Vec<u8> {
     let mut chunk = vec![0u8; EVTX_CHUNK_HEADER_SIZE];
     chunk[0..8].copy_from_slice(&EVTX_CHUNK_MAGIC);
