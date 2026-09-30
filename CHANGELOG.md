@@ -19,9 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     emission order is keyed by path so a run is reproducible.
   - Requires an `ArtifactCatalog`: `can_parse` returns `false` without one rather than falling
     back to a local glob list that would drift from the knowledge base.
-  - `parser::ARTIFACT_DEFINITION` (`artifact.definition`) carries the *path-derived* attribution
-    beside the log's own `event.channel`, so a renamed or planted log is visible in the record
-    rather than silently reconciled.
+  - `forensic_rs::dictionary::ARTIFACT_DEFINITION` (`artifact.definition`) carries the
+    *path-derived* attribution beside the log's own `event.channel`, so a renamed or planted log
+    is visible in the record rather than silently reconciled.
   - Channel classification recognizes the PowerShell, Sysmon and TerminalServices channels that
     `EventRecord::into_forensic_data`'s own mapping leaves as `WindowsEvents::Other`; the raw
     channel string is always kept verbatim in `event.channel`.
@@ -31,11 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Known limitation:** that granularity covers whole logs, not truncation *within* one.
     `EvtxEventLogReader` derives its chunk count from the file length and returns `Ok` once the
     4096-byte header parses, so a `.evtx` truncated to any length in `4096..=69631` yields zero
-    records and zero errors — identical output to a genuinely empty log. The header's own
-    `chunk_count`/`last_chunk_number` are parsed and then ignored. The parser's record-cursor
-    `Err` arm is unreachable for the same reason (`query()` walks an eagerly-built `Vec`) and is
-    kept as defensive structure. Pinned by `parser::tests::a_log_truncated_mid_chunk_is_silently_empty`;
-    the fix belongs in the reader, which this change deliberately does not touch.
+    records and zero errors — indistinguishable from a chunk slot that was allocated but never
+    written. The header's own `chunk_count` field is parsed and then ignored (`last_chunk_number`
+    is not the field this bites on: it is `0` for a single-chunk log either way). The parser's
+    record-cursor `Err` arm is unreachable for the same reason (`query()` walks an eagerly-built
+    `Vec`) and is kept as defensive structure. Pinned by
+    `parser::tests::a_log_truncated_mid_chunk_is_silently_empty`; the fix belongs in the reader,
+    which this change deliberately does not touch.
 - Initial implementation of `FormatFactory` and `EventLogReader` for legacy `.evt` and modern `.evtx` Windows Event Log files, including a from-scratch BinXML decoder (templates, substitutions, value-type arrays) for `.evtx`.
 - Nested BinXml value decoding (`VALUE_BINXML`), so `EventData`'s content is recursively decoded and populated instead of dropped.
 - `tests/real_evtx_sample.rs`: a real `.evtx` sample checked in as a regression fixture.

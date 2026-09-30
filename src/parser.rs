@@ -15,16 +15,6 @@ use crate::evtx::reader::EvtxEventLogReader;
 /// namespace.
 pub const PARSER_ID: &str = "windows.evtx";
 
-/// Which artifact-catalog definition matched the file a record came from.
-///
-/// A record already carries the log's own `event.channel`; this carries the *path-derived*
-/// attribution beside it, so a planted or renamed log — one whose channel disagrees with
-/// where it was found — is visible in the record instead of being silently reconciled.
-///
-/// Local to this crate pending a `forensic_rs::dictionary` constant; see the workspace
-/// `FINDINGS.md`.
-pub const ARTIFACT_DEFINITION: &str = "artifact.definition";
-
 /// The ForensicArtifacts definitions this parser reads, in the order it reads them.
 ///
 /// The catalog is the source of truth for *where* these logs live; there is deliberately no
@@ -109,7 +99,7 @@ fn artifact_for_channel(channel: &str) -> Artifact {
 /// * the reader derives `total_chunks` from the file *length*
 ///   (`(len - 4096) / EVTX_CHUNK_SIZE`), so a `.evtx` truncated to any length in `4096..=69631`
 ///   parses its header, yields `total_chunks == 0`, and produces **zero records and zero `Err`
-///   items** — output identical to a genuinely empty log;
+///   items** — output indistinguishable from a chunk slot that was allocated but never written;
 /// * an unparsable chunk slot is skipped (`continue`) and a structurally corrupt record ends the
 ///   chunk scan (`break`), in both cases without so much as a `debug!`;
 /// * the header's own `chunk_count` and `last_chunk_number` — the evidence that records *were*
@@ -635,10 +625,13 @@ mod tests {
         // The blind spot itself: no record, and nothing says so.
         assert!(
             errors.is_empty(),
-            "PINNED CURRENT BEHAVIOUR: mid-chunk truncation raises no error. If this now fails, \
-             the reader learned to compare its header's chunk_count against the file length — \
-             that is the desired fix; update this test and the FINDINGS.md entry rather than \
-             restoring the silence. Got: {errors:?}"
+            "PINNED CURRENT BEHAVIOUR: mid-chunk truncation raises no error. This pin fires on \
+             the header's own chunk_count (file[42..44], written as 1 by build_evtx_file) versus \
+             total_chunks computed from the file length — not on last_chunk_number, which is 0 \
+             for a single-chunk log either way and would not trip. If this now fails, the reader \
+             learned to compare chunk_count against the file length — that is the desired fix; \
+             update this test and the FINDINGS.md entry rather than restoring the silence. \
+             Got: {errors:?}"
         );
         assert_eq!(
             records.len(),
@@ -652,12 +645,17 @@ mod tests {
             "the one surviving record must be the intact log's"
         );
 
-        // And the point of the pin: that output is byte-for-byte what a genuinely empty log
-        // produces, which is why an analyst cannot tell the two apart.
-        let mut header_only = full;
-        header_only.truncate(4096);
+        // And the point of the pin: that output is indistinguishable from a chunk slot that was
+        // allocated but never written — a valid header, full file length, and a zeroed chunk
+        // area, which is what "genuinely empty" means on disk. This is deliberately NOT a second
+        // short file: truncating to 4096 bytes gives total_chunks == 0 and skips the chunk loop
+        // entirely, while a full-length zeroed chunk gives total_chunks == 1 and exercises
+        // `EvtxChunkHeader::parse` failing on the zeroed magic, taking the `continue` path at
+        // reader.rs — the actual code path a never-written chunk slot takes.
+        let mut never_written = full;
+        never_written[4096..].fill(0); // zero the chunk area, keep the 4096-byte file header
         let empty_vfs = InMemoryVirtualFileSystem::new()
-            .with_file(format!("{LOGS}/System.evtx"), header_only)
+            .with_file(format!("{LOGS}/System.evtx"), never_written)
             .with_file(
                 format!("{LOGS}/Security.evtx"),
                 build_evtx_file("Security"),
@@ -666,7 +664,8 @@ mod tests {
         assert_eq!(
             empty_items.len(),
             items.len(),
-            "a log truncated mid-chunk and a log with no chunks at all are indistinguishable"
+            "a log truncated mid-chunk and a log with a never-written chunk slot are \
+             indistinguishable"
         );
     }
 
