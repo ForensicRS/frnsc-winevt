@@ -4,7 +4,6 @@
 //! this answers "find every Windows XML Event Log this evidence has, and emit its records".
 //! The two are complementary, not alternatives: a pipeline registers both.
 
-use std::collections::BTreeMap;
 use std::io::Read;
 
 use forensic_rs::prelude::*;
@@ -71,10 +70,12 @@ fn artifact_for_channel(channel: &str) -> Artifact {
 ///
 /// # Requires an artifact catalog
 ///
-/// Files are located exclusively through [`ParseContext::resolve_artifact`] over
-/// [`DEFINITIONS`]. A run with no catalog configured on its `TriageSources` cannot be served,
-/// and [`Self::can_parse`] returns `false` rather than falling back to a hand-maintained glob
-/// list that would silently diverge from the knowledge base.
+/// Files are located exclusively through [`ParseContext::locate_artifact_files`] over
+/// [`DEFINITIONS`]: at the locations the definitions name, or, on a collection with its own
+/// layout (Triage-IR keeps logs under `CopiedFiles/eventlogs/Logs`), by the file names they end
+/// in. Every record says which in `artifact.located_by`. A run with no catalog configured on its
+/// `TriageSources` cannot be served, and [`Self::can_parse`] returns `false` rather than falling
+/// back to a hand-maintained glob list that would silently diverge from the knowledge base.
 ///
 /// # Failure granularity
 ///
@@ -185,64 +186,49 @@ impl ArtifactParserFactory for EvtxParserFactory {
 
         // Problems first, so they are not buried after thousands of records.
         let mut head: Vec<ForensicResult<ForensicData>> = Vec::new();
-        // Keyed by path so a file two definitions both name is read once, and so emission
-        // order does not depend on the filesystem's walk order.
-        let mut targets: BTreeMap<FPathBuf, &'static str> = BTreeMap::new();
-        for definition in DEFINITIONS.iter().copied() {
-            let resolution = match ctx.resolve_artifact(definition) {
-                Ok(resolution) => resolution,
-                Err(e) => {
-                    head.push(Err(e));
-                    continue;
-                }
-            };
-            // A directory that could not be listed is not the same as "the log is absent":
-            // it is a hole in the evidence and stays visible as its own item.
-            head.extend(resolution.errors.into_iter().map(Err));
-            // Likewise a source of the definition that never became a search pattern at all:
-            // that part of the definition was not examined, which is not the same as "not
-            // found". `notes` below are only how the patterns were built (which fallback was
-            // used, ...) — the path each record ends up carrying already tells the analyst
-            // where it really came from, so those are for the engineer.
-            head.extend(resolution.unresolved.into_iter().map(|u| {
-                Err(ForensicError::other(
-                    "catalog",
-                    format!(
-                        "{definition}: source {:?} was not searched: {}",
-                        u.source, u.reason
-                    ),
-                ))
-            }));
-            for note in &resolution.notes {
-                debug!("{PARSER_ID}: {definition}: {note}");
-            }
-            for file in resolution.files {
-                // Every `WindowsXMLEventLog*` source names files, never directories; a
-                // directory match would be a catalog change, not an event log.
-                if file.directory {
-                    debug!(
-                        "{PARSER_ID}: {definition}: ignoring directory {}",
-                        file.path
-                    );
-                    continue;
-                }
-                if let Some(first) = targets.get(&file.path) {
-                    debug!(
-                        "{PARSER_ID}: {} matched both {first} and {definition}; attributed to {first}",
-                        file.path
-                    );
-                    continue;
-                }
-                targets.insert(file.path, definition);
-            }
+        // At the definitions' locations, or, on a collection with its own layout (Triage-IR's
+        // `CopiedFiles/eventlogs`, a folder of exported logs), by the file names they end in.
+        let located = ctx.locate_artifact_files(DEFINITIONS)?;
+        // A directory that could not be listed is not the same as "the log is absent": it is
+        // a hole in the evidence and stays visible as its own item.
+        head.extend(located.errors.into_iter().map(Err));
+        // Likewise a source of a definition that never became a search pattern at all: that
+        // part of the definition was not examined, which is not the same as "not found".
+        // `notes` are only how the patterns were built (which fallback was used, ...) — the
+        // path and `artifact.located_by` each record carries already tell the analyst where it
+        // really came from, so those are for the engineer.
+        head.extend(located.unresolved.into_iter().map(|u| {
+            Err(ForensicError::other(
+                "catalog",
+                format!(
+                    "{}: source {:?} was not searched: {}",
+                    u.artifact, u.source, u.reason
+                ),
+            ))
+        }));
+        for note in &located.notes {
+            debug!("{PARSER_ID}: {note}");
         }
+        // Sorted by path, each path once (attributed to the first definition naming it), so
+        // emission order does not depend on the filesystem's walk order.
+        let targets: Vec<(FPathBuf, &'static str, FoundBy)> = located
+            .files
+            .into_iter()
+            .filter_map(|file| {
+                let definition = DEFINITIONS
+                    .iter()
+                    .copied()
+                    .find(|d| *d == &*file.definition)?;
+                Some((file.path, definition, file.found_by))
+            })
+            .collect();
 
         // One registered source per real file — never one wildcard standing in for several.
-        let targets: Vec<(FPathBuf, &'static str, SourceHandle)> = targets
+        let targets: Vec<(FPathBuf, &'static str, FoundBy, SourceHandle)> = targets
             .into_iter()
-            .map(|(path, definition)| {
+            .map(|(path, definition, found_by)| {
                 let source = ctx.register_source(SourceKey::Path(path.as_str().to_string()));
-                (path, definition, source)
+                (path, definition, found_by, source)
             })
             .collect();
 
@@ -252,7 +238,7 @@ impl ArtifactParserFactory for EvtxParserFactory {
                     return Ok(());
                 }
             }
-            for (path, definition, source) in targets {
+            for (path, definition, found_by, source) in targets {
                 if cancellation.is_cancelled() {
                     return Ok(());
                 }
@@ -285,6 +271,7 @@ impl ArtifactParserFactory for EvtxParserFactory {
                             let data = to_forensic_data(
                                 &host,
                                 definition,
+                                found_by,
                                 path.as_path(),
                                 &source,
                                 acquisition,
@@ -331,6 +318,7 @@ fn read_log(fs: &dyn FileSystem, path: &FPath) -> ForensicResult<EvtxEventLogRea
 fn to_forensic_data(
     host: &str,
     definition: &'static str,
+    found_by: FoundBy,
     path: &FPath,
     source: &SourceHandle,
     acquisition: Acquisition,
@@ -356,6 +344,7 @@ fn to_forensic_data(
     );
     data.set(ARTIFACT_PATH, path.as_str().to_string());
     data.set(ARTIFACT_DEFINITION, definition);
+    data.set(ARTIFACT_LOCATED_BY, found_by.as_str());
     data
 }
 
@@ -529,6 +518,7 @@ mod tests {
             field(sysmon, ARTIFACT_DEFINITION),
             Some("WindowsXMLEventLogSysmon")
         );
+        assert_eq!(field(sysmon, ARTIFACT_LOCATED_BY), Some("location"));
         // The channel is classified, not invented: `event.channel` above still holds it
         // verbatim, and `WindowsEvents::Other` would be the un-classified answer.
         assert_eq!(
@@ -564,6 +554,60 @@ mod tests {
             sysmon.provenance(),
             security.provenance(),
             "each log must mint against its own registered source"
+        );
+    }
+
+    #[test]
+    fn a_collection_with_its_own_layout_is_read_by_the_definitions_file_names() {
+        // The Triage-IR layout of the RabanoSRV case: every log copied flat into one folder,
+        // next to logs no definition names.
+        const COPIED: &str = "LiveResponseData/CopiedFiles/eventlogs/Logs";
+        let vfs = InMemoryVirtualFileSystem::new()
+            .with_file(
+                format!("{COPIED}/Security.evtx"),
+                build_evtx_file("Security"),
+            )
+            .with_file(format!("{COPIED}/System.evtx"), build_evtx_file("System"))
+            .with_file(
+                format!("{COPIED}/Microsoft-Windows-DhcpNap%4Admin.evtx"),
+                build_evtx_file("Microsoft-Windows-DhcpNap/Admin"),
+            );
+        let items = run(&sources(vfs, true));
+
+        assert!(
+            items.iter().all(|i| i.is_ok()),
+            "unexpected error items: {:?}",
+            items
+                .iter()
+                .filter_map(|i| i.as_ref().err())
+                .collect::<Vec<_>>()
+        );
+        let records: Vec<&ForensicData> = items.iter().filter_map(|i| i.as_ref().ok()).collect();
+        let got: Vec<(Option<&str>, Option<&str>, Option<&str>)> = records
+            .iter()
+            .map(|d| {
+                (
+                    field(d, ARTIFACT_PATH),
+                    field(d, ARTIFACT_DEFINITION),
+                    field(d, ARTIFACT_LOCATED_BY),
+                )
+            })
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (
+                    Some(format!("{COPIED}/Security.evtx").as_str()),
+                    Some("WindowsXMLEventLogSecurity"),
+                    Some("file_name")
+                ),
+                (
+                    Some(format!("{COPIED}/System.evtx").as_str()),
+                    Some("WindowsXMLEventLogSystem"),
+                    Some("file_name")
+                ),
+            ],
+            "only the logs a definition names, each flagged as found by name"
         );
     }
 
