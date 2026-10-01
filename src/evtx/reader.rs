@@ -2,9 +2,9 @@
 
 use forensic_rs::prelude::*;
 
-use crate::evtx::binxml::{decode_record_fragment, ChunkContext};
-use crate::evtx::chunk::{EvtxChunkHeader, EVTX_CHUNK_HEADER_SIZE, EVTX_CHUNK_SIZE};
-use crate::evtx::file_header::{EvtxFileHeader, EVTX_FILE_HEADER_BLOCK_SIZE};
+use crate::evtx::binxml::{ChunkContext, decode_record_fragment};
+use crate::evtx::chunk::{EVTX_CHUNK_HEADER_SIZE, EVTX_CHUNK_SIZE, EvtxChunkHeader};
+use crate::evtx::file_header::{EVTX_FILE_HEADER_BLOCK_SIZE, EvtxFileHeader};
 use crate::evtx::mapping::map_event;
 use crate::evtx::record::EvtxRecordHeader;
 use crate::evtx::xml::XmlNode;
@@ -53,20 +53,24 @@ impl EvtxEventLogReader {
         let file_header = EvtxFileHeader::parse(&bytes)?;
         let mut records = Vec::new();
 
-        let total_chunks = bytes.len().saturating_sub(EVTX_FILE_HEADER_BLOCK_SIZE) / EVTX_CHUNK_SIZE;
+        let total_chunks =
+            bytes.len().saturating_sub(EVTX_FILE_HEADER_BLOCK_SIZE) / EVTX_CHUNK_SIZE;
         for chunk_index in 0..total_chunks {
             let chunk_start = EVTX_FILE_HEADER_BLOCK_SIZE + chunk_index * EVTX_CHUNK_SIZE;
             let chunk_bytes = &bytes[chunk_start..chunk_start + EVTX_CHUNK_SIZE];
             let Ok(chunk_header) = EvtxChunkHeader::parse(chunk_bytes) else {
                 continue; // never-written / unallocated chunk slot
             };
-            let chunk_checksum_valid = chunk_header.events_checksum_valid && chunk_header.header_checksum_valid;
+            let chunk_checksum_valid =
+                chunk_header.events_checksum_valid && chunk_header.header_checksum_valid;
 
             let ctx = ChunkContext::new(chunk_bytes);
             let scan_limit = (chunk_header.free_space_offset as usize).min(chunk_bytes.len());
             let mut offset = EVTX_CHUNK_HEADER_SIZE;
             while offset + 4 <= scan_limit {
-                let Ok((record_header, _binxml, next_offset)) = EvtxRecordHeader::parse_at(chunk_bytes, offset) else {
+                let Ok((record_header, _binxml, next_offset)) =
+                    EvtxRecordHeader::parse_at(chunk_bytes, offset)
+                else {
                     break; // structural corruption — stop scanning this chunk
                 };
                 let binxml_start = offset + 24;
@@ -77,7 +81,9 @@ impl EvtxEventLogReader {
                         XmlNode::Element(e) if e.name == "Event" => Some(e),
                         _ => None,
                     }) {
-                        Some(event) => map_event(&event, record_header.record_id, record_header.timestamp()),
+                        Some(event) => {
+                            map_event(&event, record_header.record_id, record_header.timestamp())
+                        }
                         None => empty_record_with_decode_error(
                             &record_header,
                             "BinXML fragment decoded but contained no Event root element",
@@ -87,10 +93,16 @@ impl EvtxEventLogReader {
                 };
 
                 if !file_header.checksum_valid {
-                    record.data.insert(text_owned(FILE_CHECKSUM_VALID_FIELD.to_string()), Field::from(false));
+                    record.data.insert(
+                        text_owned(FILE_CHECKSUM_VALID_FIELD.to_string()),
+                        Field::from(false),
+                    );
                 }
                 if !chunk_checksum_valid {
-                    record.data.insert(text_owned(CHUNK_CHECKSUM_VALID_FIELD.to_string()), Field::from(false));
+                    record.data.insert(
+                        text_owned(CHUNK_CHECKSUM_VALID_FIELD.to_string()),
+                        Field::from(false),
+                    );
                 }
                 records.push(record);
 
@@ -104,7 +116,10 @@ impl EvtxEventLogReader {
 
 fn empty_record_with_decode_error(header: &EvtxRecordHeader, error: &str) -> EventRecord {
     let mut data = std::collections::BTreeMap::new();
-    data.insert(text_owned(DECODE_ERROR_FIELD.to_string()), Field::from(error.to_string()));
+    data.insert(
+        text_owned(DECODE_ERROR_FIELD.to_string()),
+        Field::from(error.to_string()),
+    );
     EventRecord {
         record_id: header.record_id,
         event_id: 0,
@@ -151,7 +166,9 @@ mod tests {
         assert_eq!(reader.channels().unwrap(), vec!["Application".to_string()]);
         assert_eq!(reader.event_count("Application").unwrap(), 1);
 
-        let mut iter = reader.query(&EventLogQuery::new().with_event_ids(&[7])).unwrap();
+        let mut iter = reader
+            .query(&EventLogQuery::new().with_event_ids(&[7]))
+            .unwrap();
         let record = iter.next().unwrap().unwrap();
         assert_eq!(record.event_id, 7);
         assert_eq!(record.record_id, 1);
@@ -161,12 +178,14 @@ mod tests {
         assert_eq!(record.provider, "P");
         assert!(iter.next().unwrap().is_none());
 
-        assert!(reader
-            .query(&EventLogQuery::new().with_event_ids(&[999]))
-            .unwrap()
-            .next()
-            .unwrap()
-            .is_none());
+        assert!(
+            reader
+                .query(&EventLogQuery::new().with_event_ids(&[999]))
+                .unwrap()
+                .next()
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -180,9 +199,14 @@ mod tests {
 
         let reader = EvtxEventLogReader::from_bytes(bytes).unwrap();
         let mut iter = reader.query(&EventLogQuery::new()).unwrap();
-        let record = iter.next().unwrap().expect("record still present despite bad checksum");
+        let record = iter
+            .next()
+            .unwrap()
+            .expect("record still present despite bad checksum");
         assert_eq!(
-            record.data.get(&text_owned(CHUNK_CHECKSUM_VALID_FIELD.to_string())),
+            record
+                .data
+                .get(&text_owned(CHUNK_CHECKSUM_VALID_FIELD.to_string())),
             Some(&Field::from(false))
         );
     }
@@ -196,9 +220,16 @@ mod tests {
 
         let reader = EvtxEventLogReader::from_bytes(file).unwrap();
         let mut iter = reader.query(&EventLogQuery::new()).unwrap();
-        let record = iter.next().unwrap().expect("record still present despite undecodable BinXML");
+        let record = iter
+            .next()
+            .unwrap()
+            .expect("record still present despite undecodable BinXML");
         assert_eq!(record.record_id, 42);
-        assert!(record.data.contains_key(&text_owned(DECODE_ERROR_FIELD.to_string())));
+        assert!(
+            record
+                .data
+                .contains_key(&text_owned(DECODE_ERROR_FIELD.to_string()))
+        );
         assert!(iter.next().unwrap().is_none());
     }
 }

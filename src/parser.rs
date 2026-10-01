@@ -220,7 +220,10 @@ impl ArtifactParserFactory for EvtxParserFactory {
                 // Every `WindowsXMLEventLog*` source names files, never directories; a
                 // directory match would be a catalog change, not an event log.
                 if file.directory {
-                    debug!("{PARSER_ID}: {definition}: ignoring directory {}", file.path);
+                    debug!(
+                        "{PARSER_ID}: {definition}: ignoring directory {}",
+                        file.path
+                    );
                     continue;
                 }
                 if let Some(first) = targets.get(&file.path) {
@@ -361,9 +364,7 @@ mod tests {
     use std::borrow::Cow;
     use std::sync::Arc;
 
-    use forensic_rs::prelude::testing::{
-        collect_run, InMemoryVirtualFileSystem, TestingRegistry,
-    };
+    use forensic_rs::prelude::testing::{InMemoryVirtualFileSystem, TestingRegistry, collect_run};
     use forensic_rs::traits::registry::RegValue;
 
     use super::*;
@@ -493,10 +494,7 @@ mod tests {
     #[test]
     fn emits_one_record_per_event_with_per_file_provenance() {
         let vfs = InMemoryVirtualFileSystem::new()
-            .with_file(
-                format!("{LOGS}/Security.evtx"),
-                build_evtx_file("Security"),
-            )
+            .with_file(format!("{LOGS}/Security.evtx"), build_evtx_file("Security"))
             .with_file(
                 format!("{LOGS}/Microsoft-Windows-Sysmon%4Operational.evtx"),
                 build_evtx_file(SYSMON_CHANNEL),
@@ -508,7 +506,10 @@ mod tests {
         assert!(
             items.iter().all(|i| i.is_ok()),
             "unexpected error items: {:?}",
-            items.iter().filter_map(|i| i.as_ref().err()).collect::<Vec<_>>()
+            items
+                .iter()
+                .filter_map(|i| i.as_ref().err())
+                .collect::<Vec<_>>()
         );
         assert_eq!(records.len(), 2);
 
@@ -517,9 +518,7 @@ mod tests {
         assert_eq!(
             paths,
             vec![
-                Some(
-                    format!("{LOGS}/Microsoft-Windows-Sysmon%4Operational.evtx").as_str()
-                ),
+                Some(format!("{LOGS}/Microsoft-Windows-Sysmon%4Operational.evtx").as_str()),
                 Some(format!("{LOGS}/Security.evtx").as_str()),
             ]
         );
@@ -537,7 +536,10 @@ mod tests {
             &Artifact::from(WindowsEvents::Sysmon),
             "the Sysmon channel must classify as WindowsEvents::Sysmon"
         );
-        assert_eq!(field(sysmon, ARTIFACT_NAME), Some("Windows::WinEvt::Sysmon"));
+        assert_eq!(
+            field(sysmon, ARTIFACT_NAME),
+            Some("Windows::WinEvt::Sysmon")
+        );
         assert_eq!(field(sysmon, ARTIFACT_HOST), Some("TEST-HOST"));
         // The record's own Computer stays separate from the run's host.
         assert_eq!(field(sysmon, "host.name"), Some("HOST"));
@@ -571,10 +573,7 @@ mod tests {
         truncated.truncate(16); // below the EVTX file header: cannot be framed at all
         let vfs = InMemoryVirtualFileSystem::new()
             .with_file(format!("{LOGS}/System.evtx"), truncated)
-            .with_file(
-                format!("{LOGS}/Security.evtx"),
-                build_evtx_file("Security"),
-            );
+            .with_file(format!("{LOGS}/Security.evtx"), build_evtx_file("Security"));
         let items = run(&sources(vfs, true));
 
         let errors: Vec<&ForensicError> = items.iter().filter_map(|i| i.as_ref().err()).collect();
@@ -613,10 +612,7 @@ mod tests {
         truncated.truncate(40000); // header intact, chunk cut in half
         let vfs = InMemoryVirtualFileSystem::new()
             .with_file(format!("{LOGS}/System.evtx"), truncated)
-            .with_file(
-                format!("{LOGS}/Security.evtx"),
-                build_evtx_file("Security"),
-            );
+            .with_file(format!("{LOGS}/Security.evtx"), build_evtx_file("Security"));
         let items = run(&sources(vfs, true));
 
         let errors: Vec<&ForensicError> = items.iter().filter_map(|i| i.as_ref().err()).collect();
@@ -656,10 +652,7 @@ mod tests {
         never_written[4096..].fill(0); // zero the chunk area, keep the 4096-byte file header
         let empty_vfs = InMemoryVirtualFileSystem::new()
             .with_file(format!("{LOGS}/System.evtx"), never_written)
-            .with_file(
-                format!("{LOGS}/Security.evtx"),
-                build_evtx_file("Security"),
-            );
+            .with_file(format!("{LOGS}/Security.evtx"), build_evtx_file("Security"));
         let empty_items = run(&sources(empty_vfs, true));
         assert_eq!(
             empty_items.len(),
@@ -685,7 +678,10 @@ mod tests {
         assert!(
             items.iter().all(|i| i.is_ok()),
             "an undecodable record is a record, not an error: {:?}",
-            items.iter().filter_map(|i| i.as_ref().err()).collect::<Vec<_>>()
+            items
+                .iter()
+                .filter_map(|i| i.as_ref().err())
+                .collect::<Vec<_>>()
         );
         let records: Vec<&ForensicData> = items.iter().filter_map(|i| i.as_ref().ok()).collect();
         assert_eq!(records.len(), 2, "both logs contribute their record");
@@ -731,10 +727,8 @@ mod tests {
 
     #[test]
     fn without_a_catalog_the_parser_declines_instead_of_guessing_paths() {
-        let vfs = InMemoryVirtualFileSystem::new().with_file(
-            format!("{LOGS}/Security.evtx"),
-            build_evtx_file("Security"),
-        );
+        let vfs = InMemoryVirtualFileSystem::new()
+            .with_file(format!("{LOGS}/Security.evtx"), build_evtx_file("Security"));
         let sources = sources(vfs, false);
         let triage = TriageContext::new("TEST-HOST", "default");
         let cancellation = CancellationToken::new();
@@ -746,10 +740,8 @@ mod tests {
 
     #[test]
     fn cancellation_stops_before_any_log_is_read() {
-        let vfs = InMemoryVirtualFileSystem::new().with_file(
-            format!("{LOGS}/Security.evtx"),
-            build_evtx_file("Security"),
-        );
+        let vfs = InMemoryVirtualFileSystem::new()
+            .with_file(format!("{LOGS}/Security.evtx"), build_evtx_file("Security"));
         let sources = sources(vfs, true);
         let triage = TriageContext::new("TEST-HOST", "default");
         let cancellation = CancellationToken::new();
