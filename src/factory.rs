@@ -37,7 +37,11 @@ impl FormatFactory for EvtFormatFactory {
         MountKind::EventLog
     }
 
-    fn probe(&self, file: &mut dyn VirtualFile, _ctx: &MountContext<'_>) -> ForensicResult<ProbeScore> {
+    fn probe(
+        &self,
+        file: &mut dyn VirtualFile,
+        _ctx: &MountContext<'_>,
+    ) -> ForensicResult<ProbeScore> {
         let start = file.stream_position()?;
         let mut header = [0u8; EVT_HEADER_SIZE];
         let matches = file.read_exact(&mut header).is_ok()
@@ -45,10 +49,18 @@ impl FormatFactory for EvtFormatFactory {
                 == EVT_HEADER_SIZE
             && u32::from_le_bytes([header[4], header[5], header[6], header[7]]) == EVT_SIGNATURE;
         file.seek(SeekFrom::Start(start))?;
-        Ok(if matches { ProbeScore::Exact } else { ProbeScore::No })
+        Ok(if matches {
+            ProbeScore::Exact
+        } else {
+            ProbeScore::No
+        })
     }
 
-    fn mount(&self, mut file: Box<dyn VirtualFile>, _ctx: &MountContext<'_>) -> ForensicResult<Mounted> {
+    fn mount(
+        &self,
+        mut file: Box<dyn VirtualFile>,
+        _ctx: &MountContext<'_>,
+    ) -> ForensicResult<Mounted> {
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
         let reader = EvtEventLogReader::from_bytes(&bytes, self.channel.clone())?;
@@ -68,15 +80,27 @@ impl FormatFactory for EvtxFormatFactory {
         MountKind::EventLog
     }
 
-    fn probe(&self, file: &mut dyn VirtualFile, _ctx: &MountContext<'_>) -> ForensicResult<ProbeScore> {
+    fn probe(
+        &self,
+        file: &mut dyn VirtualFile,
+        _ctx: &MountContext<'_>,
+    ) -> ForensicResult<ProbeScore> {
         let start = file.stream_position()?;
         let mut magic = [0u8; EVTX_FILE_MAGIC.len()];
         let matches = file.read_exact(&mut magic).is_ok() && magic == EVTX_FILE_MAGIC;
         file.seek(SeekFrom::Start(start))?;
-        Ok(if matches { ProbeScore::Exact } else { ProbeScore::No })
+        Ok(if matches {
+            ProbeScore::Exact
+        } else {
+            ProbeScore::No
+        })
     }
 
-    fn mount(&self, mut file: Box<dyn VirtualFile>, _ctx: &MountContext<'_>) -> ForensicResult<Mounted> {
+    fn mount(
+        &self,
+        mut file: Box<dyn VirtualFile>,
+        _ctx: &MountContext<'_>,
+    ) -> ForensicResult<Mounted> {
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
         let reader = crate::evtx::reader::EvtxEventLogReader::from_bytes(bytes)?;

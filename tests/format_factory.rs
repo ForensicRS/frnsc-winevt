@@ -95,13 +95,20 @@ fn resolve_bytes(resolver: &MountResolver, path: &str, bytes: Vec<u8>) -> Forens
     let fs: Arc<dyn FileSystem> = Arc::new(vfs);
     let locator = EvidenceLocator::root().push(LocatorSegment::Path(FPathBuf::from(path)));
     let file = fs.open(FPath::new(path))?;
-    resolver.resolve(&fs, &locator, file, Some(MountKind::EventLog), &CancellationToken::new())
+    resolver.resolve(
+        &fs,
+        &locator,
+        file,
+        Some(MountKind::EventLog),
+        &CancellationToken::new(),
+    )
 }
 
 #[test]
 fn mounts_evt_and_queries_it() {
     let resolver = build_resolver();
-    let mounted = resolve_bytes(&resolver, "AppEvent.evt", build_evt_bytes()).expect("should mount as an event log");
+    let mounted = resolve_bytes(&resolver, "AppEvent.evt", build_evt_bytes())
+        .expect("should mount as an event log");
     let reader = mounted.as_event_log().expect("Mounted::EventLog");
 
     assert_eq!(reader.channels().unwrap(), vec!["Application".to_string()]);
@@ -115,7 +122,8 @@ fn mounts_evt_and_queries_it() {
 #[test]
 fn mounts_empty_evtx() {
     let resolver = build_resolver();
-    let mounted = resolve_bytes(&resolver, "Application.evtx", build_evtx_bytes()).expect("should mount as an event log");
+    let mounted = resolve_bytes(&resolver, "Application.evtx", build_evtx_bytes())
+        .expect("should mount as an event log");
     let reader = mounted.as_event_log().expect("Mounted::EventLog");
     assert!(reader.channels().unwrap().is_empty());
     assert!(reader.query_all().unwrap().next().unwrap().is_none());
@@ -137,6 +145,8 @@ fn each_factory_only_claims_its_own_format() {
         .build();
     assert!(resolve_bytes(&evt_only, "Application.evtx", build_evtx_bytes()).is_err());
 
-    let evtx_only = MountResolver::builder().factory(Arc::new(EvtxFormatFactory)).build();
+    let evtx_only = MountResolver::builder()
+        .factory(Arc::new(EvtxFormatFactory))
+        .build();
     assert!(resolve_bytes(&evtx_only, "AppEvent.evt", build_evt_bytes()).is_err());
 }

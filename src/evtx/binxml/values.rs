@@ -108,9 +108,12 @@ impl BinXmlValue {
             BinXmlValue::Binary(b) => Field::from(hex_encode(b)),
             BinXmlValue::Date(t) => Field::Date(*t),
             BinXmlValue::NestedBinXml(..) => Field::Null,
-            BinXmlValue::Array(items) => {
-                Field::Array(items.iter().map(|v| text_owned(v.to_display_string())).collect())
-            }
+            BinXmlValue::Array(items) => Field::Array(
+                items
+                    .iter()
+                    .map(|v| text_owned(v.to_display_string()))
+                    .collect(),
+            ),
         }
     }
 }
@@ -181,7 +184,11 @@ fn read_systime(reader: &mut ByteReader) -> ForensicResult<ForensicTimestamp> {
 /// so variable-length types are read as exactly that many bytes with no
 /// internal length prefix) and `None` for a standalone `Value` token (where
 /// variable-length types instead carry their own length prefix).
-fn read_scalar(reader: &mut ByteReader, value_type: u8, explicit_size: Option<usize>) -> ForensicResult<BinXmlValue> {
+fn read_scalar(
+    reader: &mut ByteReader,
+    value_type: u8,
+    explicit_size: Option<usize>,
+) -> ForensicResult<BinXmlValue> {
     Ok(match value_type {
         VALUE_NULL => {
             // A null-typed template substitution still reserves its full
@@ -200,7 +207,11 @@ fn read_scalar(reader: &mut ByteReader, value_type: u8, explicit_size: Option<us
                     if byte_len == 0 {
                         String::new()
                     } else {
-                        ensure_format!(byte_len % 2 == 0, "binxml_value", "odd byte length for a wstring value");
+                        ensure_format!(
+                            byte_len % 2 == 0,
+                            "binxml_value",
+                            "odd byte length for a wstring value"
+                        );
                         reader.read_utf16le_string(byte_len)?
                     }
                 }
@@ -250,7 +261,9 @@ fn read_scalar(reader: &mut ByteReader, value_type: u8, explicit_size: Option<us
             Some(4) => BinXmlValue::U64(reader.read_u32_le()? as u64),
             _ => BinXmlValue::U64(reader.read_u64_le()?),
         },
-        VALUE_FILETIME => BinXmlValue::Date(ForensicTimestamp::from_win_filetime(reader.read_u64_le()?)),
+        VALUE_FILETIME => {
+            BinXmlValue::Date(ForensicTimestamp::from_win_filetime(reader.read_u64_le()?))
+        }
         VALUE_SYSTIME => BinXmlValue::Date(read_systime(reader)?),
         VALUE_SID => {
             let byte_len = match explicit_size {
@@ -280,7 +293,7 @@ fn read_scalar(reader: &mut ByteReader, value_type: u8, explicit_size: Option<us
             return Err(ForensicError::invalid_format(
                 "binxml_value",
                 format!("unsupported BinXML value type 0x{other:02x}"),
-            ))
+            ));
         }
     })
 }
@@ -292,7 +305,11 @@ fn read_scalar(reader: &mut ByteReader, value_type: u8, explicit_size: Option<us
 /// element types are read as a fixed-width repeat until the byte budget is
 /// exhausted, and `WString`/`String` arrays are NUL-terminated entries packed
 /// back-to-back filling the same budget.
-pub fn read_value(reader: &mut ByteReader, raw_type: u8, explicit_size: Option<usize>) -> ForensicResult<BinXmlValue> {
+pub fn read_value(
+    reader: &mut ByteReader,
+    raw_type: u8,
+    explicit_size: Option<usize>,
+) -> ForensicResult<BinXmlValue> {
     let is_array = raw_type & ARRAY_FLAG != 0;
     let value_type = raw_type & !ARRAY_FLAG;
     if !is_array {
@@ -360,11 +377,15 @@ mod tests {
     #[test]
     fn reads_guid() {
         let bytes: [u8; 16] = [
-            0x33, 0x22, 0x11, 0x00, 0x55, 0x44, 0x77, 0x66, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
+            0x33, 0x22, 0x11, 0x00, 0x55, 0x44, 0x77, 0x66, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD,
+            0xEE, 0xFF,
         ];
         let mut r = ByteReader::new(&bytes);
         let v = read_value(&mut r, VALUE_GUID, Some(16)).unwrap();
-        assert_eq!(v.to_display_string(), "{00112233-4455-6677-8899-aabbccddeeff}");
+        assert_eq!(
+            v.to_display_string(),
+            "{00112233-4455-6677-8899-aabbccddeeff}"
+        );
     }
 
     #[test]

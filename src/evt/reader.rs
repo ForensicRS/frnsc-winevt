@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use forensic_rs::prelude::*;
 
-use crate::evt::file_header::{EvtFileHeader, EVT_HEADER_SIZE};
+use crate::evt::file_header::{EVT_HEADER_SIZE, EvtFileHeader};
 use crate::evt::record::EvtRecord;
 use crate::query_iter::RecordIter;
 
@@ -30,7 +30,9 @@ fn map_record(record: EvtRecord, channel: &str) -> EventRecord {
     }
     data.insert(
         text_owned("event.time_written".to_string()),
-        Field::Date(ForensicTimestamp::from_unix_secs(record.time_written as i64)),
+        Field::Date(ForensicTimestamp::from_unix_secs(
+            record.time_written as i64,
+        )),
     );
     data.insert(
         text_owned("event.category".to_string()),
@@ -120,7 +122,7 @@ impl EventLogReader for EvtEventLogReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::evt::file_header::{EVT_SIGNATURE, EVT_HEADER_SIZE as HDR};
+    use crate::evt::file_header::{EVT_HEADER_SIZE as HDR, EVT_SIGNATURE};
     use crate::evt::record::EVT_RECORD_SIGNATURE;
 
     /// `EvtRecord`'s fixed 56-byte header size (see `record.rs`'s private
@@ -201,7 +203,9 @@ mod tests {
         assert_eq!(reader.event_count("Application").unwrap(), 2);
         assert_eq!(reader.event_count("Security").unwrap(), 0);
 
-        let mut iter = reader.query(&EventLogQuery::new().with_event_ids(&[200])).unwrap();
+        let mut iter = reader
+            .query(&EventLogQuery::new().with_event_ids(&[200]))
+            .unwrap();
         let record = iter.next().unwrap().unwrap();
         assert_eq!(record.event_id, 200);
         assert_eq!(record.record_id, 2);

@@ -38,7 +38,12 @@ fn reports_the_single_channel() {
         reader.channels().unwrap(),
         vec!["Microsoft-Windows-Dhcp-Client/Admin".to_string()]
     );
-    assert_eq!(reader.event_count("Microsoft-Windows-Dhcp-Client/Admin").unwrap(), 4);
+    assert_eq!(
+        reader
+            .event_count("Microsoft-Windows-Dhcp-Client/Admin")
+            .unwrap(),
+        4
+    );
 }
 
 #[test]
@@ -52,16 +57,22 @@ fn every_record_decodes_with_no_anomalies() {
         assert_eq!(record.channel, "Microsoft-Windows-Dhcp-Client/Admin");
         assert_eq!(record.user_sid.as_deref(), Some("S-1-5-19"));
         assert!(
-            !record.data.contains_key(&text_owned("evtx.record.decode_error".to_string())),
+            !record
+                .data
+                .contains_key(&text_owned("evtx.record.decode_error".to_string())),
             "record {} should not have failed to decode",
             record.record_id
         );
         assert!(
-            !record.data.contains_key(&text_owned("evtx.chunk.checksum_valid".to_string())),
+            !record
+                .data
+                .contains_key(&text_owned("evtx.chunk.checksum_valid".to_string())),
             "this fixture's chunk checksum should be valid"
         );
         assert!(
-            !record.data.contains_key(&text_owned("evtx.file.checksum_valid".to_string())),
+            !record
+                .data
+                .contains_key(&text_owned("evtx.file.checksum_valid".to_string())),
             "this fixture's file checksum should be valid"
         );
     }
@@ -71,7 +82,9 @@ fn every_record_decodes_with_no_anomalies() {
 #[test]
 fn decodes_informational_lease_events() {
     let reader = load_reader();
-    let mut iter = reader.query(&EventLogQuery::new().with_event_ids(&[50041])).unwrap();
+    let mut iter = reader
+        .query(&EventLogQuery::new().with_event_ids(&[50041]))
+        .unwrap();
 
     let first = iter.next().unwrap().expect("record 1");
     assert_eq!(first.record_id, 1);
@@ -90,23 +103,39 @@ fn decodes_informational_lease_events() {
 fn decodes_warning_and_error_events_with_event_data() {
     let reader = load_reader();
 
-    let mut warnings = reader.query(&EventLogQuery::new().with_event_ids(&[1003])).unwrap();
+    let mut warnings = reader
+        .query(&EventLogQuery::new().with_event_ids(&[1003]))
+        .unwrap();
     let record3 = warnings.next().unwrap().expect("record 3");
     assert_eq!(record3.record_id, 3);
     assert_eq!(record3.computer, "CompW2019x64.cancamusa.com");
     assert_eq!(record3.level, EventLevel::Warning);
-    assert_eq!(field_str(&record3, "winlog.event_data.HWAddress"), Some("0x000063c37a46"));
+    assert_eq!(
+        field_str(&record3, "winlog.event_data.HWAddress"),
+        Some("0x000063c37a46")
+    );
     assert_eq!(field_str(&record3, "winlog.event_data.HWLength"), Some("6"));
-    assert_eq!(field_str(&record3, "winlog.event_data.StatusCode"), Some("121"));
+    assert_eq!(
+        field_str(&record3, "winlog.event_data.StatusCode"),
+        Some("121")
+    );
     assert!(warnings.next().unwrap().is_none());
 
-    let mut errors = reader.query(&EventLogQuery::new().with_event_ids(&[1001])).unwrap();
+    let mut errors = reader
+        .query(&EventLogQuery::new().with_event_ids(&[1001]))
+        .unwrap();
     let record4 = errors.next().unwrap().expect("record 4");
     assert_eq!(record4.record_id, 4);
     assert_eq!(record4.computer, "CompW2019x64.cancamusa.com");
     assert_eq!(record4.level, EventLevel::Error);
-    assert_eq!(field_str(&record4, "winlog.event_data.HWAddress"), Some("0x000063c37a46"));
+    assert_eq!(
+        field_str(&record4, "winlog.event_data.HWAddress"),
+        Some("0x000063c37a46")
+    );
     assert_eq!(field_str(&record4, "winlog.event_data.HWLength"), Some("6"));
-    assert_eq!(field_str(&record4, "winlog.event_data.StatusCode"), Some("121"));
+    assert_eq!(
+        field_str(&record4, "winlog.event_data.StatusCode"),
+        Some("121")
+    );
     assert!(errors.next().unwrap().is_none());
 }

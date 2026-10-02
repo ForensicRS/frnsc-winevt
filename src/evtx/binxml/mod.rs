@@ -4,5 +4,5 @@
 pub mod tokens;
 pub mod values;
 
-pub use tokens::{decode_record_fragment, ChunkContext};
+pub use tokens::{ChunkContext, decode_record_fragment};
 pub use values::BinXmlValue;

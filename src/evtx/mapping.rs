@@ -60,7 +60,10 @@ pub fn map_event(event: &XmlElement, record_id: u64, timestamp: ForensicTimestam
             data.insert(text_owned(key), Field::from(entry.text()));
         }
         if let Some(binary) = event_data.child("Binary") {
-            data.insert(text_owned("winlog.event_data.binary".to_string()), Field::from(binary.text()));
+            data.insert(
+                text_owned("winlog.event_data.binary".to_string()),
+                Field::from(binary.text()),
+            );
         }
     }
     if let Some(user_data) = event.child("UserData") {
@@ -122,7 +125,10 @@ mod tests {
     fn attr_el(name: &str, attrs: Vec<(&str, &str)>) -> XmlElement {
         XmlElement {
             name: name.to_string(),
-            attributes: attrs.into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            attributes: attrs
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
             children: Vec::new(),
         }
     }
@@ -132,7 +138,10 @@ mod tests {
         let system = el(
             "System",
             vec![
-                XmlNode::Element(attr_el("Provider", vec![("Name", "Microsoft-Windows-Security-Auditing")])),
+                XmlNode::Element(attr_el(
+                    "Provider",
+                    vec![("Name", "Microsoft-Windows-Security-Auditing")],
+                )),
                 XmlNode::Element(el("EventID", vec![XmlNode::Text("4624".to_string())])),
                 XmlNode::Element(el("Channel", vec![XmlNode::Text("Security".to_string())])),
                 XmlNode::Element(el("Computer", vec![XmlNode::Text("HOST1".to_string())])),
@@ -141,9 +150,14 @@ mod tests {
             ],
         );
         let mut logon_type = el("Data", vec![XmlNode::Text("3".to_string())]);
-        logon_type.attributes.push(("Name".to_string(), "LogonType".to_string()));
+        logon_type
+            .attributes
+            .push(("Name".to_string(), "LogonType".to_string()));
         let event_data = el("EventData", vec![XmlNode::Element(logon_type)]);
-        let event = el("Event", vec![XmlNode::Element(system), XmlNode::Element(event_data)]);
+        let event = el(
+            "Event",
+            vec![XmlNode::Element(system), XmlNode::Element(event_data)],
+        );
 
         let timestamp = ForensicTimestamp::from_unix_secs(1_700_000_000);
         let record = map_event(&event, 42, timestamp);
@@ -156,7 +170,9 @@ mod tests {
         assert_eq!(record.provider, "Microsoft-Windows-Security-Auditing");
         assert_eq!(record.user_sid.as_deref(), Some("S-1-5-18"));
         assert_eq!(
-            record.data.get(&text_owned("winlog.event_data.LogonType".to_string())),
+            record
+                .data
+                .get(&text_owned("winlog.event_data.LogonType".to_string())),
             Some(&Field::from("3".to_string()))
         );
     }
@@ -170,7 +186,9 @@ mod tests {
 
         let record = map_event(&event, 1, ForensicTimestamp::from_unix_secs(0));
         assert_eq!(
-            record.data.get(&text_owned("winlog.user_data.EventXML.ProcessId".to_string())),
+            record.data.get(&text_owned(
+                "winlog.user_data.EventXML.ProcessId".to_string()
+            )),
             Some(&Field::from("1234".to_string()))
         );
     }

@@ -72,7 +72,11 @@ impl<'a> ChunkContext<'a> {
 /// Decodes one record's top-level BinXML fragment (`chunk[start..end]`,
 /// absolute chunk offsets) into its XML nodes (normally exactly one root
 /// `Event` element).
-pub fn decode_record_fragment(ctx: &ChunkContext, start: usize, end: usize) -> ForensicResult<Vec<XmlNode>> {
+pub fn decode_record_fragment(
+    ctx: &ChunkContext,
+    start: usize,
+    end: usize,
+) -> ForensicResult<Vec<XmlNode>> {
     let mut reader = ByteReader::new(ctx.chunk);
     reader.seek_to(start)?;
     decode_fragment(ctx, &mut reader, end, None, false)
@@ -176,7 +180,7 @@ fn decode_node(
             return Err(ForensicError::invalid_format(
                 "binxml_token",
                 format!("unexpected BinXML token 0x{other:02x}"),
-            ))
+            ));
         }
     })
 }
@@ -228,14 +232,20 @@ fn decode_element(
             if child_token & TOKEN_TYPE_MASK == TOK_END_ELEMENT {
                 break;
             }
-            children.extend(decode_node(ctx, reader, child_token, substitutions, in_template)?);
+            children.extend(decode_node(
+                ctx,
+                reader,
+                child_token,
+                substitutions,
+                in_template,
+            )?);
         },
         TOK_CLOSE_EMPTY_ELEMENT => {}
         other => {
             return Err(ForensicError::invalid_format(
                 "binxml_token",
                 format!("expected CloseStartElement or CloseEmptyElement, found 0x{other:02x}"),
-            ))
+            ));
         }
     }
 
@@ -266,7 +276,10 @@ fn decode_value_bearing_token(
             let _declared_value_type = reader.read_u8()?;
             let is_conditional = token & TOKEN_TYPE_MASK == TOK_CONDITIONAL_SUBSTITUTION;
             let subs = substitutions.ok_or_else(|| {
-                ForensicError::invalid_format("binxml_token", "substitution token outside of a template")
+                ForensicError::invalid_format(
+                    "binxml_token",
+                    "substitution token outside of a template",
+                )
             })?;
             let value = subs
                 .get(substitution_id as usize)
@@ -332,7 +345,10 @@ fn resolve_name(ctx: &ChunkContext, reader: &mut ByteReader) -> ForensicResult<S
 ///
 /// The template body is re-decoded fresh against these substitution values
 /// (rather than cached as a parsed tree) — only its byte range is cached.
-fn read_template_instance(ctx: &ChunkContext, reader: &mut ByteReader) -> ForensicResult<Vec<XmlNode>> {
+fn read_template_instance(
+    ctx: &ChunkContext,
+    reader: &mut ByteReader,
+) -> ForensicResult<Vec<XmlNode>> {
     let _unknown = reader.read_u8()?;
     let _template_id = reader.read_u32_le()?;
     let definition_offset = reader.read_u32_le()?;
